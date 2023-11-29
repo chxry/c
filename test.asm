@@ -1,5 +1,6 @@
 .test 
-	add #a 3
-	add #b #a
+	add 3 #a
+	add #a #b
+	mov #b #c
 	jmp .test
 	hlt

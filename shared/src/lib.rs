@@ -38,17 +38,40 @@ impl Reg {
 #[derive(Copy, Clone, Debug)]
 pub enum OpCode {
   Hlt,
-  JmpDR,
-  JmpR,
-  JmpC,
-  JmpD,
-  AddR,
-  AddDR,
-  AddC,
-  AddD,
+  Jmp,
+  Add,
+  Mov,
 }
 
 impl OpCode {
+  pub fn parse(s: &str) -> Result<Self> {
+    match &*s.to_uppercase() {
+      "HLT" => Ok(Self::Hlt),
+      "JMP" => Ok(Self::Jmp),
+      "ADD" => Ok(Self::Add),
+      "MOV" => Ok(Self::Mov),
+      _ => Err(format!("unknown opcode '{}'", s).into()),
+    }
+  }
+
+  pub fn to(&self) -> u8 {
+    unsafe { mem::transmute(*self) }
+  }
+
+  pub fn from(b: u8) -> Self {
+    unsafe { mem::transmute(b) }
+  }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum AddrMode {
+  Reg,
+  DerefReg,
+  Const,
+  Deref,
+}
+
+impl AddrMode {
   pub fn to(&self) -> u8 {
     unsafe { mem::transmute(*self) }
   }
@@ -59,10 +82,8 @@ impl OpCode {
 
   pub fn len(&self) -> u16 {
     match self {
-      Self::Hlt => 1,
-      Self::JmpDR | Self::JmpR => 2,
-      Self::JmpC | Self::JmpD | Self::AddDR | Self::AddR => 3,
-      Self::AddC | Self::AddD => 4,
+      Self::Reg | Self::DerefReg => 1,
+      Self::Const | Self::Deref => 1,
     }
   }
 }

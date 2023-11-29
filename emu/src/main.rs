@@ -1,7 +1,7 @@
 use std::{fs, fmt, thread};
 use std::time::Duration;
 use std::sync::atomic::{AtomicU16, Ordering};
-use shared::{Result, Reg, OpCode};
+use shared::{Result, Reg, OpCode, AddrMode};
 
 fn main() -> Result {
   let ram = fs::read("out.o")?;
@@ -9,59 +9,27 @@ fn main() -> Result {
   loop {
     println!("{}", registers);
     registers.mar.store(registers.pc.load());
-    load(&ram, &registers);
+    load_b(&ram, &registers);
 
-    let inst = OpCode::from(registers.mdr.load() as _);
-    registers.pc.add(inst.len());
+    let opcode = OpCode::from(registers.mdr.load() as _);
+    registers.pc.add(1);
 
-    match inst {
+    match opcode {
       OpCode::Hlt => return Ok(()),
-      OpCode::JmpDR => {
-        registers.mar.add(1);
-        load(&ram, &registers);
-        registers.mar.store(get_reg(&registers).load());
-        load(&ram, &registers);
-        registers.pc.store(registers.mdr.load());
+      OpCode::Jmp => registers.pc.store(get_operand(&ram, &registers)),
+      OpCode::Add => {
+        registers.pc.add(1);
+        let src = get_operand(&ram, &registers);
+        load_b(&ram, &registers);
+        get_reg(&registers).add(src);
       }
-      OpCode::JmpR => {
-        registers.mar.add(1);
-        load(&ram, &registers);
-        registers.mar.store(get_reg(&registers).load());
-        registers.pc.store(get_reg(&registers).load());
+      OpCode::Mov => {
+        registers.pc.add(1);
+        let src = get_operand(&ram, &registers);
+        load_b(&ram, &registers);
+        get_reg(&registers).store(src);
       }
-      OpCode::JmpC => {
-        registers.mar.add(1);
-        load(&ram, &registers);
-        registers.pc.store(registers.mdr.load());
-      }
-      OpCode::JmpD => {
-        registers.mar.add(1);
-        load(&ram, &registers);
-        registers.mar.store(registers.mdr.load());
-        load(&ram, &registers);
-        registers.pc.store(registers.mdr.load());
-      }
-      OpCode::AddDR | OpCode::AddR | OpCode::AddC | OpCode::AddD => {
-        registers.mar.add(1);
-        load(&ram, &registers);
-        let dest = get_reg(&registers);
-        registers.mar.add(1);
-        load(&ram, &registers);
-        match inst {
-          OpCode::AddDR => {
-            registers.mar.store(get_reg(&registers).load());
-            load(&ram, &registers);
-          }
-          OpCode::AddR => dest.add(get_reg(&registers).load()),
-          OpCode::AddC => dest.add(registers.mdr.load()),
-          OpCode::AddD => {
-            registers.mar.store(registers.mdr.load());
-            load(&ram, &registers);
-          }
-          _ => unreachable!(),
-        }
-      }
-    }
+    };
     thread::sleep(Duration::from_millis(50));
   }
 }
@@ -73,8 +41,49 @@ fn load(ram: &[u8], registers: &Registers) {
     .store(u16::from_le_bytes([ram[s], ram[s + 1]]));
 }
 
+fn load_b(ram: &[u8], registers: &Registers) {
+  registers.mdr.store(ram[registers.mar.load() as usize] as _);
+}
+
 fn get_reg(registers: &Registers) -> &Register {
   registers.get(Reg::from(registers.mdr.load() as _))
+}
+
+fn get_operand(ram: &[u8], registers: &Registers) -> u16 {
+  registers.mar.add(1);
+  load_b(&ram, &registers);
+  let addr_mode = AddrMode::from(registers.mdr.load() as _);
+  registers.mar.add(1);
+  match addr_mode {
+    AddrMode::Reg => {
+      load_b(&ram, &registers);
+      registers.pc.add(2);
+      registers.mar.add(1);
+      get_reg(&registers).load()
+    }
+    AddrMode::DerefReg => {
+      load_b(&ram, &registers);
+      registers.mar.store(get_reg(&registers).load());
+      load(&ram, &registers);
+      registers.pc.add(2);
+      registers.mar.add(1);
+      registers.mdr.load()
+    }
+    AddrMode::Const => {
+      load(&ram, &registers);
+      registers.pc.add(3);
+      registers.mar.add(2);
+      registers.mdr.load()
+    }
+    AddrMode::Deref => {
+      load(&ram, &registers);
+      registers.mar.store(registers.mdr.load());
+      load(&ram, &registers);
+      registers.pc.add(3);
+      registers.mar.add(2);
+      registers.mdr.load()
+    }
+  }
 }
 
 #[derive(Default)]
