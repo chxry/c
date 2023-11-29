@@ -57,11 +57,12 @@ impl OpCode {
     unsafe { mem::transmute(b) }
   }
 
-  pub fn len(&self) -> u8 {
+  pub fn len(&self) -> u16 {
     match self {
       Self::Hlt => 1,
-      Self::JmpDR | Self::JmpR | Self::JmpC | Self::JmpD => 2,
-      Self::AddDR | Self::AddR | Self::AddC | Self::AddD => 3,
+      Self::JmpDR | Self::JmpR => 2,
+      Self::JmpC | Self::JmpD | Self::AddDR | Self::AddR => 3,
+      Self::AddC | Self::AddD => 4,
     }
   }
 }

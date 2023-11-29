@@ -1,6 +1,6 @@
 use std::{fs, fmt, thread};
 use std::time::Duration;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU16, Ordering};
 use shared::{Result, Reg, OpCode};
 
 fn main() -> Result {
@@ -11,8 +11,7 @@ fn main() -> Result {
     registers.mar.store(registers.pc.load());
     load(&ram, &registers);
 
-    let inst = OpCode::from(registers.mdr.load());
-    println!("{:?}", inst);
+    let inst = OpCode::from(registers.mdr.load() as _);
     registers.pc.add(inst.len());
 
     match inst {
@@ -68,11 +67,14 @@ fn main() -> Result {
 }
 
 fn load(ram: &[u8], registers: &Registers) {
-  registers.mdr.store(ram[registers.mar.load() as usize]);
+  let s = registers.mar.load() as usize;
+  registers
+    .mdr
+    .store(u16::from_le_bytes([ram[s], ram[s + 1]]));
 }
 
 fn get_reg(registers: &Registers) -> &Register {
-  registers.get(Reg::from(registers.mdr.load()))
+  registers.get(Reg::from(registers.mdr.load() as _))
 }
 
 #[derive(Default)]
@@ -119,18 +121,18 @@ impl fmt::Display for Registers {
 }
 
 #[derive(Default)]
-struct Register(AtomicU8);
+struct Register(AtomicU16);
 
 impl Register {
-  fn load(&self) -> u8 {
+  fn load(&self) -> u16 {
     self.0.load(Ordering::Relaxed)
   }
 
-  fn store(&self, val: u8) {
+  fn store(&self, val: u16) {
     self.0.store(val, Ordering::Relaxed);
   }
 
-  fn add(&self, val: u8) {
+  fn add(&self, val: u16) {
     self.0.fetch_add(val, Ordering::Relaxed);
   }
 }
