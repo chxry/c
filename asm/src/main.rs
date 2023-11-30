@@ -50,10 +50,11 @@ fn assemble(tokens: Vec<Token>) -> Result<Vec<u8>> {
           | OpCode::Jlt
           | OpCode::Jle
           | OpCode::Jgt
-          | OpCode::Jge => {
+          | OpCode::Jge
+          | OpCode::Out => {
             op_any(&mut tokens, &mut resolves, true, true, &mut out)?;
           }
-          OpCode::Cmp | OpCode::Add | OpCode::Mov => {
+          OpCode::Cmp | OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Mov => {
             let allow_deref = op_any(&mut tokens, &mut resolves, true, true, &mut out)?;
             op_any(&mut tokens, &mut resolves, allow_deref, false, &mut out)?;
           }

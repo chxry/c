@@ -8,6 +8,7 @@ pub enum Reg {
   Mar,
   Mdr,
   Flgs,
+  Im,
   A,
   B,
   C,
@@ -25,6 +26,7 @@ impl Reg {
       "MAR" => Ok(Self::Mar),
       "MDR" => Ok(Self::Mdr),
       "FLGS" => Ok(Self::Flgs),
+      "IM" => Ok(Self::Im),
       "A" => Ok(Self::A),
       "B" => Ok(Self::B),
       "C" => Ok(Self::C),
@@ -58,7 +60,11 @@ pub enum OpCode {
   Jge,
   Cmp,
   Add,
+  Sub,
+  Mul,
+  Div,
   Mov,
+  Out,
 }
 
 impl OpCode {
@@ -74,7 +80,11 @@ impl OpCode {
       "JGE" => Ok(Self::Jge),
       "CMP" => Ok(Self::Cmp),
       "ADD" => Ok(Self::Add),
+      "SUB" => Ok(Self::Sub),
+      "MUL" => Ok(Self::Mul),
+      "DIV" => Ok(Self::Div),
       "MOV" => Ok(Self::Mov),
+      "OUT" => Ok(Self::Out),
       _ => Err(format!("unknown opcode '{}'", s).into()),
     }
   }

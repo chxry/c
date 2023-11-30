@@ -8,7 +8,7 @@ fn main() -> Result {
   let mut ram = fs::read("out.o")?;
   let registers = Registers::default();
   loop {
-    println!("{}", registers);
+    // println!("{}", registers);
     registers.mar.store(registers.pc.load());
     load_b(&ram, &registers);
 
@@ -38,7 +38,7 @@ fn main() -> Result {
           registers.pc.store(to.load(&ram, &registers));
         }
       }
-      OpCode::Cmp | OpCode::Add | OpCode::Mov => {
+      OpCode::Cmp | OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Mov => {
         registers.mar.add(1);
         let src = get_operand(&ram, &registers);
         let dest = get_operand(&ram, &registers);
@@ -55,14 +55,27 @@ fn main() -> Result {
             Ordering::Equal => registers.flgs.store(EQUAL),
             Ordering::Greater => registers.flgs.store(GREATER),
           },
-          OpCode::Add => dest.store(&mut ram, &registers, src_val + dest_val),
+          OpCode::Add => dest.store(&mut ram, &registers, dest_val + src_val),
+          OpCode::Sub => dest.store(&mut ram, &registers, dest_val - src_val),
+          OpCode::Mul => dest.store(&mut ram, &registers, dest_val * src_val),
+          OpCode::Div => {
+            dest.store(&mut ram, &registers, dest_val / src_val);
+            registers.im.store(dest_val % src_val);
+          }
           OpCode::Mov => dest.store(&mut ram, &registers, src_val),
           _ => unreachable!(),
         }
       }
+      OpCode::Out => {
+        registers.mar.add(1);
+        println!(
+          "OUT {}",
+          get_operand(&ram, &registers).load(&ram, &registers)
+        );
+      }
     };
 
-    thread::sleep(Duration::from_millis(50));
+    thread::sleep(Duration::from_millis(10));
   }
 }
 
@@ -121,7 +134,6 @@ fn get_operand<'a>(ram: &[u8], registers: &'a Registers) -> Operand<'a> {
   }
 }
 
-#[derive(Debug)]
 enum Operand<'a> {
   Reg(&'a Register),
   Mem(u16),
@@ -159,6 +171,7 @@ struct Registers {
   mar: Register,
   mdr: Register,
   flgs: Register,
+  im: Register,
   a: Register,
   b: Register,
   c: Register,
@@ -176,6 +189,7 @@ impl Registers {
       Reg::Mar => &self.mar,
       Reg::Mdr => &self.mdr,
       Reg::Flgs => &self.flgs,
+      Reg::Im => &self.im,
       Reg::A => &self.a,
       Reg::B => &self.b,
       Reg::C => &self.c,
@@ -192,13 +206,13 @@ impl fmt::Display for Registers {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     write!(
       f,
-      "pc: {}, mar: {}, mdr: {}, flgs: {:08b}\na: {}, b: {}, c: {}, d: {}, e: {}, f: {}, g: {}, h: {}",
-      self.pc, self.mar, self.mdr, self.flgs.load(), self.a, self.b, self.c, self.d, self.e, self.f, self.g, self.h
+      "pc: {}, mar: {}, mdr: {}, flgs: {:08b}, im: {}\na: {}, b: {}, c: {}, d: {}, e: {}, f: {}, g: {}, h: {}",
+      self.pc, self.mar, self.mdr, self.flgs.load(), self.im, self.a, self.b, self.c, self.d, self.e, self.f, self.g, self.h
     )
   }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct Register(AtomicU16);
 
 impl Register {
