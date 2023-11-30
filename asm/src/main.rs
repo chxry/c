@@ -17,7 +17,7 @@ fn main() -> Result {
 fn parse(src: &str) -> Result<Vec<Token>> {
   let mut tokens = vec![];
   for line in src.lines() {
-    if !line.starts_with(';') {
+    if !line.starts_with('#') {
       for s in line.split_whitespace() {
         tokens.push(Token::parse(s)?);
       }
@@ -29,6 +29,7 @@ fn parse(src: &str) -> Result<Vec<Token>> {
 
 fn assemble(tokens: Vec<Token>) -> Result<Vec<u8>> {
   let mut labels = HashMap::new();
+  let mut resolves = vec![];
   let mut out = vec![];
   let mut tokens = tokens.into_iter();
   while let Some(t) = tokens.next() {
@@ -36,19 +37,25 @@ fn assemble(tokens: Vec<Token>) -> Result<Vec<u8>> {
       Token::Label(s) => match labels.entry(s) {
         Entry::Occupied(_) => return Err(format!("label already declared '{}'", s).into()),
         Entry::Vacant(e) => {
-          e.insert(out.len() as _);
+          e.insert(out.len() as u16);
         }
       },
       Token::Instruction(i) => {
         out.push(i.to());
         match i {
           OpCode::Hlt => {}
-          OpCode::Jmp => {
-            op_any(&mut tokens, &labels, &mut out)?;
+          OpCode::Jmp
+          | OpCode::Jeq
+          | OpCode::Jne
+          | OpCode::Jlt
+          | OpCode::Jle
+          | OpCode::Jgt
+          | OpCode::Jge => {
+            op_any(&mut tokens, &mut resolves, true, &mut out)?;
           }
-          OpCode::Add | OpCode::Mov => {
-            op_any(&mut tokens, &labels, &mut out)?;
-            op_reg(&mut tokens, &mut out)?;
+          OpCode::Cmp | OpCode::Add | OpCode::Mov => {
+            let deref = op_any(&mut tokens, &mut resolves, true, &mut out)?;
+            op_any(&mut tokens, &mut resolves, deref, &mut out)?;
           }
         }
       }
@@ -56,42 +63,51 @@ fn assemble(tokens: Vec<Token>) -> Result<Vec<u8>> {
       _ => return Err(format!("expected label/instruction, found {:?}", t).into()),
     };
   }
+  for (i, l) in resolves {
+    match labels.get(l) {
+      Some(c) => {
+        out.splice(i..=i + 1, c.to_le_bytes());
+      }
+      None => return Err(format!("unknown label '{}'", l).into()),
+    }
+  }
   Ok(out)
 }
 
-fn op_reg(tokens: &mut IntoIter<Token>, out: &mut Vec<u8>) -> Result {
-  match tokens.next().unwrap_or(Token::Eof) {
-    Token::Reg(r) => out.push(r.to()),
-    t => return Err(format!("expected register, found {:?}", t).into()),
-  };
-  Ok(())
-}
-
-fn op_any(tokens: &mut IntoIter<Token>, labels: &HashMap<&str, u16>, out: &mut Vec<u8>) -> Result {
+fn op_any<'a>(
+  tokens: &mut IntoIter<Token<'a>>,
+  resolves: &mut Vec<(usize, &'a str)>,
+  deref_allowed: bool,
+  out: &mut Vec<u8>,
+) -> Result<bool> {
   match tokens.next().unwrap_or(Token::Eof) {
     Token::Reg(r) => out.extend([AddrMode::Reg.to(), r.to()]),
     Token::Const(c) => {
       out.push(AddrMode::Const.to());
       out.extend(c.to_le_bytes())
     }
-    Token::Label(l) => match labels.get(l) {
-      Some(i) => {
-        out.push(AddrMode::Const.to());
-        out.extend(i.to_le_bytes())
+    Token::Label(l) => {
+      out.extend([AddrMode::Const.to(), 0, 0]);
+      resolves.push((out.len() - 2, l));
+    }
+    Token::Deref(t) => {
+      if deref_allowed {
+        match *t {
+          Token::Reg(r) => out.extend([AddrMode::DerefReg.to(), r.to()]),
+          Token::Const(c) => {
+            out.push(AddrMode::Deref.to());
+            out.extend(c.to_le_bytes())
+          }
+          t => return Err(format!("expected register/const, found {:?}", t).into()),
+        }
+        return Ok(false);
+      } else {
+        return Err("cannot have two deref operands".into());
       }
-      None => return Err(format!("unknown label '{}'", l).into()),
-    },
-    Token::Deref(t) => match *t {
-      Token::Reg(r) => out.extend([AddrMode::DerefReg.to(), r.to()]),
-      Token::Const(c) => {
-        out.push(AddrMode::Deref.to());
-        out.extend(c.to_le_bytes())
-      }
-      t => return Err(format!("expected register/const, found {:?}", t).into()),
-    },
+    }
     t => return Err(format!("expected register/const/deref, found {:?}", t).into()),
   };
-  Ok(())
+  Ok(true)
 }
 
 #[derive(Debug)]
@@ -109,7 +125,7 @@ impl<'a> Token<'a> {
     let mut chars = s.chars().peekable();
     match chars.peek().unwrap() {
       '.' => Ok(Self::Label(&s[1..])),
-      '#' => Ok(Self::Reg(Reg::parse(&s[1..])?)),
+      '%' => Ok(Self::Reg(Reg::parse(&s[1..])?)),
       '*' => Ok(Self::Deref(Box::new(Token::parse(&s[1..])?))),
       c if c.is_digit(10) => match chars.next().unwrap() {
         '0' => match chars.next() {

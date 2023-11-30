@@ -2,10 +2,20 @@ use std::mem;
 
 pub type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-#[rustfmt::skip]
 #[derive(Copy, Clone, Debug)]
-pub enum Reg{
-  Pc, Mar, Mdr, A, B, C, D, E, F, G, H
+pub enum Reg {
+  Pc,
+  Mar,
+  Mdr,
+  Cflgs,
+  A,
+  B,
+  C,
+  D,
+  E,
+  F,
+  G,
+  H,
 }
 
 impl Reg {
@@ -14,6 +24,7 @@ impl Reg {
       "PC" => Ok(Self::Pc),
       "MAR" => Ok(Self::Mar),
       "MDR" => Ok(Self::Mdr),
+      "CFLGS" => Ok(Self::Cflgs),
       "A" => Ok(Self::A),
       "B" => Ok(Self::B),
       "C" => Ok(Self::C),
@@ -39,6 +50,13 @@ impl Reg {
 pub enum OpCode {
   Hlt,
   Jmp,
+  Jeq,
+  Jne,
+  Jlt,
+  Jle,
+  Jgt,
+  Jge,
+  Cmp,
   Add,
   Mov,
 }
@@ -48,6 +66,13 @@ impl OpCode {
     match &*s.to_uppercase() {
       "HLT" => Ok(Self::Hlt),
       "JMP" => Ok(Self::Jmp),
+      "JEQ" => Ok(Self::Jeq),
+      "JNE" => Ok(Self::Jne),
+      "JLT" => Ok(Self::Jlt),
+      "JLE" => Ok(Self::Jle),
+      "JGT" => Ok(Self::Jgt),
+      "JGE" => Ok(Self::Jge),
+      "CMP" => Ok(Self::Cmp),
       "ADD" => Ok(Self::Add),
       "MOV" => Ok(Self::Mov),
       _ => Err(format!("unknown opcode '{}'", s).into()),
@@ -78,12 +103,5 @@ impl AddrMode {
 
   pub fn from(b: u8) -> Self {
     unsafe { mem::transmute(b) }
-  }
-
-  pub fn len(&self) -> u16 {
-    match self {
-      Self::Reg | Self::DerefReg => 1,
-      Self::Const | Self::Deref => 1,
-    }
   }
 }
