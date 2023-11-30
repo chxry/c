@@ -4,5 +4,8 @@
 	mov %b %c
 	cmp 100 %b
 	jlt .test
-	mov 0x40 %g
+	mov *.data %g
 	hlt
+
+.data
+	dw 0x40

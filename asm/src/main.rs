@@ -17,7 +17,7 @@ fn main() -> Result {
 fn parse(src: &str) -> Result<Vec<Token>> {
   let mut tokens = vec![];
   for line in src.lines() {
-    if !line.starts_with('#') {
+    if !line.starts_with(';') {
       for s in line.split_whitespace() {
         tokens.push(Token::parse(s)?);
       }
@@ -51,14 +51,21 @@ fn assemble(tokens: Vec<Token>) -> Result<Vec<u8>> {
           | OpCode::Jle
           | OpCode::Jgt
           | OpCode::Jge => {
-            op_any(&mut tokens, &mut resolves, true, &mut out)?;
+            op_any(&mut tokens, &mut resolves, true, true, &mut out)?;
           }
           OpCode::Cmp | OpCode::Add | OpCode::Mov => {
-            let deref = op_any(&mut tokens, &mut resolves, true, &mut out)?;
-            op_any(&mut tokens, &mut resolves, deref, &mut out)?;
+            let allow_deref = op_any(&mut tokens, &mut resolves, true, true, &mut out)?;
+            op_any(&mut tokens, &mut resolves, allow_deref, false, &mut out)?;
           }
         }
       }
+      Token::Pseudo(p) => match tokens.next().unwrap_or(Token::Eof) {
+        Token::Const(c) => match p {
+          Pseudo::Db => out.push(c as _),
+          Pseudo::Dw => out.extend(c.to_le_bytes()),
+        },
+        t => return Err(format!("expected const, found {:?}", t).into()),
+      },
       Token::Eof => {}
       _ => return Err(format!("expected label/instruction, found {:?}", t).into()),
     };
@@ -77,11 +84,15 @@ fn assemble(tokens: Vec<Token>) -> Result<Vec<u8>> {
 fn op_any<'a>(
   tokens: &mut IntoIter<Token<'a>>,
   resolves: &mut Vec<(usize, &'a str)>,
-  deref_allowed: bool,
+  allow_deref: bool,
+  allow_const: bool,
   out: &mut Vec<u8>,
 ) -> Result<bool> {
   match tokens.next().unwrap_or(Token::Eof) {
     Token::Reg(r) => out.extend([AddrMode::Reg.to(), r.to()]),
+    Token::Const(_) | Token::Label(_) if !allow_const => {
+      return Err("dest cannot be const/label".into())
+    }
     Token::Const(c) => {
       out.push(AddrMode::Const.to());
       out.extend(c.to_le_bytes())
@@ -90,20 +101,21 @@ fn op_any<'a>(
       out.extend([AddrMode::Const.to(), 0, 0]);
       resolves.push((out.len() - 2, l));
     }
+    Token::Deref(_) if !allow_deref => return Err("cannot have two deref operands".into()),
     Token::Deref(t) => {
-      if deref_allowed {
-        match *t {
-          Token::Reg(r) => out.extend([AddrMode::DerefReg.to(), r.to()]),
-          Token::Const(c) => {
-            out.push(AddrMode::Deref.to());
-            out.extend(c.to_le_bytes())
-          }
-          t => return Err(format!("expected register/const, found {:?}", t).into()),
+      match *t {
+        Token::Reg(r) => out.extend([AddrMode::DerefReg.to(), r.to()]),
+        Token::Const(c) => {
+          out.push(AddrMode::Deref.to());
+          out.extend(c.to_le_bytes())
         }
-        return Ok(false);
-      } else {
-        return Err("cannot have two deref operands".into());
+        Token::Label(l) => {
+          out.extend([AddrMode::Deref.to(), 0, 0]);
+          resolves.push((out.len() - 2, l));
+        }
+        t => return Err(format!("expected register/const/label, found {:?}", t).into()),
       }
+      return Ok(false);
     }
     t => return Err(format!("expected register/const/deref, found {:?}", t).into()),
   };
@@ -116,6 +128,7 @@ enum Token<'a> {
   Reg(Reg),
   Const(u16),
   Instruction(OpCode),
+  Pseudo(Pseudo),
   Deref(Box<Token<'a>>),
   Eof,
 }
@@ -138,11 +151,21 @@ impl<'a> Token<'a> {
         },
         _ => Ok(Self::Const(s.parse()?)),
       },
-      _ => Ok(Self::Instruction(OpCode::parse(s)?)),
+      _ => match &*s.to_uppercase() {
+        "DB" => Ok(Self::Pseudo(Pseudo::Db)),
+        "DW" => Ok(Self::Pseudo(Pseudo::Dw)),
+        _ => Ok(Self::Instruction(OpCode::parse(s)?)),
+      },
     }
   }
 
   fn const_from_radix(s: &str, radix: u32) -> Result<Self> {
     Ok(Self::Const(u16::from_str_radix(&s[2..], radix)?))
   }
+}
+
+#[derive(Debug)]
+enum Pseudo {
+  Db,
+  Dw,
 }

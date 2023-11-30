@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 use shared::{Result, Reg, OpCode, AddrMode};
 
 fn main() -> Result {
-  let ram = fs::read("out.o")?;
+  let mut ram = fs::read("out.o")?;
   let registers = Registers::default();
   loop {
     println!("{}", registers);
@@ -24,32 +24,39 @@ fn main() -> Result {
       | OpCode::Jle
       | OpCode::Jgt
       | OpCode::Jge => {
+        registers.mar.add(1);
         let to = get_operand(&ram, &registers);
-        let flags = registers.cflgs.load();
+        let flgs = registers.flgs.load();
         if match opcode {
           OpCode::Jmp => true,
-          OpCode::Jeq | OpCode::Jle | OpCode::Jge if flags == EQUAL => true,
-          OpCode::Jne if flags != EQUAL => true,
-          OpCode::Jlt if flags == LESS => true,
-          OpCode::Jgt if flags == GREATER => true,
+          OpCode::Jeq | OpCode::Jle | OpCode::Jge if flgs == EQUAL => true,
+          OpCode::Jne if flgs != EQUAL => true,
+          OpCode::Jlt if flgs == LESS => true,
+          OpCode::Jgt if flgs == GREATER => true,
           _ => false,
         } {
-          registers.pc.store(to);
+          registers.pc.store(to.load(&ram, &registers));
         }
       }
       OpCode::Cmp | OpCode::Add | OpCode::Mov => {
-        registers.pc.add(1);
+        registers.mar.add(1);
         let src = get_operand(&ram, &registers);
-        load_b(&ram, &registers);
-        let dest = get_reg(&registers); // use get operand
+        let dest = get_operand(&ram, &registers);
+        if matches!(dest, Operand::Const(_))
+          || (matches!(src, Operand::Mem(_)) && matches!(dest, Operand::Mem(_)))
+        {
+          panic!("invalid operand type");
+        }
+        let src_val = src.load(&ram, &registers);
+        let dest_val = dest.load(&ram, &registers);
         match opcode {
-          OpCode::Cmp => match dest.load().cmp(&src) {
-            Ordering::Less => registers.cflgs.store(LESS),
-            Ordering::Equal => registers.cflgs.store(EQUAL),
-            Ordering::Greater => registers.cflgs.store(GREATER),
+          OpCode::Cmp => match dest.load(&ram, &registers).cmp(&src_val) {
+            Ordering::Less => registers.flgs.store(LESS),
+            Ordering::Equal => registers.flgs.store(EQUAL),
+            Ordering::Greater => registers.flgs.store(GREATER),
           },
-          OpCode::Add => dest.add(src),
-          OpCode::Mov => dest.store(src),
+          OpCode::Add => dest.store(&mut ram, &registers, src_val + dest_val),
+          OpCode::Mov => dest.store(&mut ram, &registers, src_val),
           _ => unreachable!(),
         }
       }
@@ -79,39 +86,69 @@ fn get_reg(registers: &Registers) -> &Register {
   registers.get(Reg::from(registers.mdr.load() as _))
 }
 
-fn get_operand(ram: &[u8], registers: &Registers) -> u16 {
-  registers.mar.add(1);
+fn get_operand<'a>(ram: &[u8], registers: &'a Registers) -> Operand<'a> {
   load_b(ram, registers);
   let addr_mode = AddrMode::from(registers.mdr.load() as _);
+  registers.pc.add(1);
   registers.mar.add(1);
   match addr_mode {
     AddrMode::Reg => {
       load_b(ram, registers);
-      registers.pc.add(2);
+      registers.pc.add(1);
       registers.mar.add(1);
-      get_reg(registers).load()
+      Operand::Reg(get_reg(registers))
     }
     AddrMode::DerefReg => {
       load_b(ram, registers);
-      registers.mar.store(get_reg(registers).load());
-      load(ram, registers);
-      registers.pc.add(2);
+      registers.pc.add(1);
       registers.mar.add(1);
-      registers.mdr.load()
+      Operand::Mem(get_reg(registers).load())
     }
     AddrMode::Const => {
       load(ram, registers);
-      registers.pc.add(3);
+      let val = registers.mdr.load();
+      registers.pc.add(2);
       registers.mar.add(2);
-      registers.mdr.load()
+      Operand::Const(val)
     }
     AddrMode::Deref => {
       load(ram, registers);
-      registers.mar.store(registers.mdr.load());
-      load(ram, registers);
-      registers.pc.add(3);
+      let val = registers.mdr.load();
+      registers.pc.add(2);
       registers.mar.add(2);
-      registers.mdr.load()
+      Operand::Mem(val)
+    }
+  }
+}
+
+#[derive(Debug)]
+enum Operand<'a> {
+  Reg(&'a Register),
+  Mem(u16),
+  Const(u16),
+}
+
+impl Operand<'_> {
+  fn load(&self, ram: &[u8], registers: &Registers) -> u16 {
+    match self {
+      Self::Reg(r) => r.load(),
+      Self::Mem(a) => {
+        registers.mar.store(*a);
+        load(ram, registers);
+        registers.mdr.load()
+      }
+      Self::Const(c) => *c,
+    }
+  }
+
+  fn store(&self, ram: &mut Vec<u8>, registers: &Registers, val: u16) {
+    match self {
+      Self::Reg(r) => r.store(val),
+      Self::Mem(a) => {
+        registers.mar.store(*a);
+        store(ram, registers);
+      }
+      Self::Const(_) => panic!("attempted to set const"),
     }
   }
 }
@@ -121,7 +158,7 @@ struct Registers {
   pc: Register,
   mar: Register,
   mdr: Register,
-  cflgs: Register,
+  flgs: Register,
   a: Register,
   b: Register,
   c: Register,
@@ -138,7 +175,7 @@ impl Registers {
       Reg::Pc => &self.pc,
       Reg::Mar => &self.mar,
       Reg::Mdr => &self.mdr,
-      Reg::Cflgs => &self.cflgs,
+      Reg::Flgs => &self.flgs,
       Reg::A => &self.a,
       Reg::B => &self.b,
       Reg::C => &self.c,
@@ -155,13 +192,13 @@ impl fmt::Display for Registers {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     write!(
       f,
-      "pc: {}, mar: {}, mdr: {}, cflgs: {:08b}\na: {}, b: {}, c: {}, d: {}, e: {}, f: {}, g: {}, h: {}",
-      self.pc, self.mar, self.mdr, self.cflgs.load(), self.a, self.b, self.c, self.d, self.e, self.f, self.g, self.h
+      "pc: {}, mar: {}, mdr: {}, flgs: {:08b}\na: {}, b: {}, c: {}, d: {}, e: {}, f: {}, g: {}, h: {}",
+      self.pc, self.mar, self.mdr, self.flgs.load(), self.a, self.b, self.c, self.d, self.e, self.f, self.g, self.h
     )
   }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Register(AtomicU16);
 
 impl Register {
@@ -186,4 +223,4 @@ impl fmt::Display for Register {
 
 const LESS: u16 = 0b01;
 const EQUAL: u16 = 0b10;
-const GREATER: u16 = 0b11;
+const GREATER: u16 = 0b100;
