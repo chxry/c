@@ -8,7 +8,7 @@ fn main() -> Result {
   let mut ram = fs::read("out.o")?;
   let registers = Registers::default();
   loop {
-    // println!("{}", registers);
+    println!("{}", registers);
     registers.mar.store(registers.pc.load());
     load_b(&ram, &registers);
 
@@ -37,6 +37,29 @@ fn main() -> Result {
         } {
           registers.pc.store(to.load(&ram, &registers));
         }
+      }
+      OpCode::Call => {
+        registers.mar.add(1);
+        let f = get_operand(&ram, &registers);
+        registers.mdr.store(registers.pc.load());
+        push(&mut ram, &registers);
+        registers.pc.store(f.load(&ram, &registers));
+      }
+      OpCode::Ret => {
+        pop(&ram, &registers);
+        registers.pc.store(registers.mdr.load());
+      }
+      OpCode::Push => {
+        registers.mar.add(1);
+        let val = get_operand(&ram, &registers);
+        registers.mdr.store(val.load(&ram, &registers));
+        push(&mut ram, &registers);
+      }
+      OpCode::Pop => {
+        registers.mar.add(1);
+        let dest = get_operand(&ram, &registers);
+        pop(&ram, &registers);
+        dest.store(&mut ram, &registers, registers.mdr.load());
       }
       OpCode::Cmp | OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Mov => {
         registers.mar.add(1);
@@ -95,6 +118,18 @@ fn load_b(ram: &[u8], registers: &Registers) {
 
 fn get_reg(registers: &Registers) -> &Register {
   registers.get(Reg::from(registers.mdr.load() as _))
+}
+
+fn push(ram: &mut Vec<u8>, registers: &Registers) {
+  registers.sp.sub(2);
+  registers.mar.store(registers.sp.load());
+  store(ram, registers);
+}
+
+fn pop(ram: &[u8], registers: &Registers) {
+  registers.mar.store(registers.sp.load());
+  load(ram, registers);
+  registers.sp.add(2);
 }
 
 fn get_operand<'a>(ram: &[u8], registers: &'a Registers) -> Operand<'a> {
@@ -168,8 +203,9 @@ struct Registers {
   pc: Register,
   mar: Register,
   mdr: Register,
-  flgs: Register,
   im: Register,
+  sp: Register,
+  flgs: Register,
   a: Register,
   b: Register,
   c: Register,
@@ -186,8 +222,9 @@ impl Registers {
       Reg::Pc => &self.pc,
       Reg::Mar => &self.mar,
       Reg::Mdr => &self.mdr,
-      Reg::Flgs => &self.flgs,
       Reg::Im => &self.im,
+      Reg::Sp => &self.sp,
+      Reg::Flgs => &self.flgs,
       Reg::A => &self.a,
       Reg::B => &self.b,
       Reg::C => &self.c,
@@ -204,8 +241,8 @@ impl fmt::Display for Registers {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     write!(
       f,
-      "pc: {}, mar: {}, mdr: {}, flgs: {:08b}, im: {}\na: {}, b: {}, c: {}, d: {}, e: {}, f: {}, g: {}, h: {}",
-      self.pc, self.mar, self.mdr, self.flgs.load(), self.im, self.a, self.b, self.c, self.d, self.e, self.f, self.g, self.h
+      "pc: {}, mar: {}, mdr: {}, im: {}, sp: {}, flgs: {:08b}\na: {}, b: {}, c: {}, d: {}, e: {}, f: {}, g: {}, h: {}",
+      self.pc, self.mar, self.mdr, self.im, self.sp, self.flgs.load(), self.a, self.b, self.c, self.d, self.e, self.f, self.g, self.h
     )
   }
 }
@@ -224,6 +261,10 @@ impl Register {
 
   fn add(&self, val: u16) {
     self.0.fetch_add(val, Relaxed);
+  }
+
+  fn sub(&self, val: u16) {
+    self.0.fetch_sub(val, Relaxed);
   }
 }
 

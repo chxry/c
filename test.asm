@@ -1,15 +1,16 @@
-mov 1 %a
-.reset
-	add 1 %a
-	add 1 %c
-	mov 1 %b
-.test
-	add 1 %b
-	mov %a %d
-	div %b %d
-	cmp %im 0
-	jeq .reset
-	cmp %b %c
-	jne .test
-	out %a
-	jmp .reset
+mov .start %sp
+jmp .start
+dn 0 512
+.start
+        out 1
+        push 2
+        call .fn
+        out 3
+        hlt
+.fn
+; clean this up
+        pop %a
+        pop %b
+        out %b
+        push %a
+        ret
