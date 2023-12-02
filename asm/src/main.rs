@@ -7,19 +7,21 @@ use shared::{Result, Reg, OpCode, AddrMode};
 fn main() -> Result {
   let src = fs::read_to_string("test.asm")?;
   let tokens = parse(&src)?;
-  println!("{:?}", tokens);
   let out = assemble(tokens)?;
-  println!("{:?}", out);
   fs::write("out.o", out)?;
+  println!("successfully assembled test.asm");
   Ok(())
 }
 
 fn parse(src: &str) -> Result<Vec<Token>> {
   let mut tokens = vec![];
-  for line in src.lines() {
+  for (i, line) in src.lines().enumerate() {
     if !line.starts_with(';') {
       for s in line.split_whitespace() {
-        tokens.push(Token::parse(s)?);
+        match Token::parse(s) {
+          Ok(t) => tokens.push(t),
+          Err(e) => return Err(format!("syntax err on line {}: {}", i + 1, e).into()),
+        }
       }
     }
   }
@@ -54,7 +56,11 @@ fn assemble(tokens: Vec<Token>) -> Result<Vec<u8>> {
           | OpCode::Out => {
             op_any(&mut tokens, &mut resolves, true, true, &mut out)?;
           }
-          OpCode::Cmp | OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Mov => {
+          OpCode::Cmp => {
+            let allow_deref = op_any(&mut tokens, &mut resolves, true, true, &mut out)?;
+            op_any(&mut tokens, &mut resolves, allow_deref, true, &mut out)?;
+          }
+          OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Mov => {
             let allow_deref = op_any(&mut tokens, &mut resolves, true, true, &mut out)?;
             op_any(&mut tokens, &mut resolves, allow_deref, false, &mut out)?;
           }

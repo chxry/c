@@ -42,9 +42,7 @@ fn main() -> Result {
         registers.mar.add(1);
         let src = get_operand(&ram, &registers);
         let dest = get_operand(&ram, &registers);
-        if matches!(dest, Operand::Const(_))
-          || (matches!(src, Operand::Mem(_)) && matches!(dest, Operand::Mem(_)))
-        {
+        if matches!(src, Operand::Mem(_)) && matches!(dest, Operand::Mem(_)) {
           panic!("invalid operand type");
         }
         let src_val = src.load(&ram, &registers);
