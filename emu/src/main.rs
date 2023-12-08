@@ -1,103 +1,160 @@
-use std::{fs, fmt, thread};
-use std::time::Duration;
+#![feature(array_chunks)]
+use std::{fs, fmt};
+use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicU16, Ordering::Relaxed};
 use std::cmp::Ordering;
+use eframe::egui;
 use shared::{Result, Reg, OpCode, AddrMode};
 
 fn main() -> Result {
-  let mut ram = fs::read("out.o")?;
-  let registers = Registers::default();
-  loop {
-    println!("{}", registers);
-    registers.mar.store(registers.pc.load());
-    load_b(&ram, &registers);
+  eframe::run_native(
+    "emu",
+    eframe::NativeOptions {
+      vsync: false,
+      ..Default::default()
+    },
+    Box::new(|cc| Box::new(Emulator::new(cc).unwrap())),
+  )?;
+  Ok(())
+}
 
-    let opcode = OpCode::from(registers.mdr.load() as _);
-    registers.pc.add(1);
+struct Emulator {
+  ram: Vec<u8>,
+  registers: Registers,
+  run: bool,
+  last_cycle: Instant,
+}
 
-    match opcode {
-      OpCode::Hlt => return Ok(()),
-      OpCode::Jmp
-      | OpCode::Jeq
-      | OpCode::Jne
-      | OpCode::Jlt
-      | OpCode::Jle
-      | OpCode::Jgt
-      | OpCode::Jge => {
-        registers.mar.add(1);
-        let to = get_operand(&ram, &registers);
-        let flgs = registers.flgs.load();
-        if match opcode {
-          OpCode::Jmp => true,
-          OpCode::Jeq | OpCode::Jle | OpCode::Jge if flgs == EQUAL => true,
-          OpCode::Jne if flgs != EQUAL => true,
-          OpCode::Jlt if flgs == LESS => true,
-          OpCode::Jgt if flgs == GREATER => true,
-          _ => false,
-        } {
-          registers.pc.store(to.load(&ram, &registers));
-        }
-      }
-      OpCode::Call => {
-        registers.mar.add(1);
-        let f = get_operand(&ram, &registers);
-        registers.mdr.store(registers.pc.load());
-        push(&mut ram, &registers);
-        registers.pc.store(f.load(&ram, &registers));
-      }
-      OpCode::Ret => {
-        pop(&ram, &registers);
-        registers.pc.store(registers.mdr.load());
-      }
-      OpCode::Push => {
-        registers.mar.add(1);
-        let val = get_operand(&ram, &registers);
-        registers.mdr.store(val.load(&ram, &registers));
-        push(&mut ram, &registers);
-      }
-      OpCode::Pop => {
-        registers.mar.add(1);
-        let dest = get_operand(&ram, &registers);
-        pop(&ram, &registers);
-        dest.store(&mut ram, &registers, registers.mdr.load());
-      }
-      OpCode::Cmp | OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Mov => {
-        registers.mar.add(1);
-        let src = get_operand(&ram, &registers);
-        let dest = get_operand(&ram, &registers);
-        if matches!(src, Operand::Mem(_)) && matches!(dest, Operand::Mem(_)) {
-          panic!("invalid operand type");
-        }
-        let src_val = src.load(&ram, &registers);
-        let dest_val = dest.load(&ram, &registers);
-        match opcode {
-          OpCode::Cmp => match dest.load(&ram, &registers).cmp(&src_val) {
-            Ordering::Less => registers.flgs.store(LESS),
-            Ordering::Equal => registers.flgs.store(EQUAL),
-            Ordering::Greater => registers.flgs.store(GREATER),
-          },
-          OpCode::Add => dest.store(&mut ram, &registers, dest_val + src_val),
-          OpCode::Sub => dest.store(&mut ram, &registers, dest_val - src_val),
-          OpCode::Mul => dest.store(&mut ram, &registers, dest_val * src_val),
-          OpCode::Div => {
-            dest.store(&mut ram, &registers, dest_val / src_val);
-            registers.im.store(dest_val % src_val);
-          }
-          OpCode::Mov => dest.store(&mut ram, &registers, src_val),
-          _ => unreachable!(),
-        }
-      }
-      OpCode::Out => {
-        registers.mar.add(1);
-        println!(
-          "OUT {}",
-          get_operand(&ram, &registers).load(&ram, &registers)
-        );
-      }
-    };
-
-    thread::sleep(Duration::from_millis(10));
+impl Emulator {
+  fn new(_: &eframe::CreationContext<'_>) -> Result<Self> {
+    Ok(Self {
+      ram: fs::read("out.o")?,
+      registers: Registers::default(),
+      run: true,
+      last_cycle: Instant::now(),
+    })
   }
+}
+
+impl eframe::App for Emulator {
+  fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+    if self.run && Instant::now().duration_since(self.last_cycle) > Duration::from_millis(10) {
+      self.run = cycle(&mut self.ram, &mut self.registers).unwrap();
+      self.last_cycle = Instant::now();
+    }
+    egui::Window::new("state").show(ctx, |ui| {
+      ui.label(format!("running: {}", self.run));
+    });
+    egui::Window::new("registers")
+      .default_width(640.0)
+      .show(ctx, |ui| {
+        ui.monospace(format!("{}", self.registers));
+      });
+    egui::Window::new("memory")
+      .default_height(320.0)
+      .vscroll(true)
+      .show(ctx, |ui| {
+        for (i, r) in self.ram.array_chunks::<16>().enumerate() {
+          ui.horizontal(|ui| {
+            ui.monospace(format!("{:08x}", i * 16));
+            ui.code(r.map(|b| format!("{:02x}", b)).join(" "));
+          });
+        }
+      });
+    ctx.request_repaint();
+  }
+}
+
+fn cycle(ram: &mut Vec<u8>, registers: &mut Registers) -> Result<bool> {
+  registers.mar.store(registers.pc.load());
+  load_b(ram, registers);
+
+  let opcode = OpCode::from(registers.mdr.load() as _);
+  registers.pc.add(1);
+
+  match opcode {
+    OpCode::Hlt => return Ok(false),
+    OpCode::Jmp
+    | OpCode::Jeq
+    | OpCode::Jne
+    | OpCode::Jlt
+    | OpCode::Jle
+    | OpCode::Jgt
+    | OpCode::Jge => {
+      registers.mar.add(1);
+      let to = get_operand(ram, registers);
+      let flgs = registers.flgs.load();
+      if match opcode {
+        OpCode::Jmp => true,
+        OpCode::Jeq | OpCode::Jle | OpCode::Jge if flgs == EQUAL => true,
+        OpCode::Jne if flgs != EQUAL => true,
+        OpCode::Jlt if flgs == LESS => true,
+        OpCode::Jgt if flgs == GREATER => true,
+        _ => false,
+      } {
+        registers.pc.store(to.load(ram, registers));
+      }
+    }
+    OpCode::Call => {
+      registers.mar.add(1);
+      let f = get_operand(ram, registers);
+      registers.mdr.store(registers.pc.load());
+      push(ram, registers);
+      registers.pc.store(f.load(ram, registers));
+    }
+    OpCode::Ret => {
+      pop(ram, registers);
+      registers.pc.store(registers.mdr.load());
+    }
+    OpCode::Push => {
+      registers.mar.add(1);
+      let val = get_operand(ram, registers);
+      registers.mdr.store(val.load(ram, registers));
+      push(ram, registers);
+    }
+    OpCode::Pop => {
+      registers.mar.add(1);
+      let dest = get_operand(ram, registers);
+      pop(ram, registers);
+      dest.store(ram, registers, registers.mdr.load());
+    }
+    OpCode::Cmp
+    | OpCode::Add
+    | OpCode::Sub
+    | OpCode::Mul
+    | OpCode::Div
+    | OpCode::Mov
+    | OpCode::Out => {
+      registers.mar.add(1);
+      let src = get_operand(ram, registers);
+      let dest = get_operand(ram, registers);
+      if matches!(src, Operand::Mem(_)) && matches!(dest, Operand::Mem(_)) {
+        panic!("invalid operand type");
+      }
+      let src_val = src.load(ram, registers);
+      let dest_val = dest.load(ram, registers);
+      match opcode {
+        OpCode::Cmp => match dest.load(ram, registers).cmp(&src_val) {
+          Ordering::Less => registers.flgs.store(LESS),
+          Ordering::Equal => registers.flgs.store(EQUAL),
+          Ordering::Greater => registers.flgs.store(GREATER),
+        },
+        OpCode::Add => dest.store(ram, registers, dest_val + src_val),
+        OpCode::Sub => dest.store(ram, registers, dest_val - src_val),
+        OpCode::Mul => dest.store(ram, registers, dest_val * src_val),
+        OpCode::Div => {
+          dest.store(ram, registers, dest_val / src_val);
+          registers.im.store(dest_val % src_val);
+        }
+        OpCode::Mov => dest.store(ram, registers, src_val),
+        OpCode::Out => {
+          println!("OUT {} {}", src_val, dest_val);
+        }
+        _ => unreachable!(),
+      }
+    }
+  };
+  Ok(true)
 }
 
 fn load(ram: &[u8], registers: &Registers) {
@@ -270,7 +327,7 @@ impl Register {
 
 impl fmt::Display for Register {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{}", self.load())
+    write!(f, "{:04x}", self.load())
   }
 }
 

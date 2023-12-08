@@ -1,5 +1,9 @@
+;include init.asm
+mov .start %sp
 mov 1 %a
-.reset
+jmp .start
+dn 0 512
+.start
 	add 1 %a
 	add 1 %c
 	mov 1 %b
@@ -8,8 +12,8 @@ mov 1 %a
 	mov %a %d
 	div %b %d
 	cmp %im 0
-	jeq .reset
+	jeq .start
 	cmp %b %c
 	jne .test
-	out %a
-	jmp .reset
+	out %a 1
+	jmp .start

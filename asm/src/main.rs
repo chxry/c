@@ -4,7 +4,7 @@ use std::collections::hash_map::Entry;
 use std::vec::IntoIter;
 use shared::{Result, Reg, OpCode, AddrMode};
 
-const PATH: &str = "test.asm";
+const PATH: &str = "primes.asm";
 
 fn main() -> Result {
   let src = fs::read_to_string(PATH)?;
@@ -18,7 +18,8 @@ fn main() -> Result {
 fn parse(src: &str) -> Result<Vec<Token>> {
   let mut tokens = vec![];
   for (i, line) in src.lines().enumerate() {
-    if !line.starts_with(';') {
+    if line.starts_with(';') {
+    } else {
       for s in line.split_whitespace() {
         match Token::parse(s) {
           Ok(t) => tokens.push(t),
@@ -56,14 +57,13 @@ fn assemble(tokens: Vec<Token>) -> Result<Vec<u8>> {
           | OpCode::Jgt
           | OpCode::Jge
           | OpCode::Call
-          | OpCode::Push
-          | OpCode::Out => {
+          | OpCode::Push => {
             op_any(&mut tokens, &mut resolves, true, true, &mut out)?;
           }
           OpCode::Pop => {
             op_any(&mut tokens, &mut resolves, true, false, &mut out)?;
           }
-          OpCode::Cmp => {
+          OpCode::Cmp | OpCode::Out => {
             let allow_deref = op_any(&mut tokens, &mut resolves, true, true, &mut out)?;
             op_any(&mut tokens, &mut resolves, allow_deref, true, &mut out)?;
           }
@@ -158,12 +158,12 @@ impl<'a> Token<'a> {
       '.' => Ok(Self::Label(&s[1..])),
       '%' => Ok(Self::Reg(Reg::parse(&s[1..])?)),
       '*' => Ok(Self::Deref(Box::new(Token::parse(&s[1..])?))),
-      c if c.is_digit(10) => match chars.next().unwrap() {
+      c if c.is_ascii_digit() => match chars.next().unwrap() {
         '0' => match chars.next() {
           Some('x') => Self::const_from_radix(s, 16),
           Some('o') => Self::const_from_radix(s, 8),
           Some('b') => Self::const_from_radix(s, 2),
-          Some(c) if c.is_digit(10) => Ok(Self::Const(s.parse()?)),
+          Some(c) if c.is_ascii_digit() => Ok(Self::Const(s.parse()?)),
           Some(b) => Err(format!("unknown base '{}'", b).into()),
           None => Ok(Self::Const(0)),
         },
